@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>What Da Mod Doin'</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.1.2/dist/tailwind.min.css" rel="stylesheet">
+    <script src="//unpkg.com/alpinejs" defer></script>
+    <script src="https://unpkg.com/cytoscape@latest/dist/cytoscape.min.js"></script>
+</head>
+<style>
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+</style>
+
+<body class="bg-gray-100">
+
+<div x-data="dataHandler()" class="p-6">
+<div x-data="{ selectedType: 'r', layers: 1,  subredditOrUser: '', hideBots: true, subsOver: 0, modsOver: 0}" class="p-6">
+    <div class="flex space-x-4 items-end mb-6">
+        <div class="flex flex-col space-y-1">
+            <label for="selectedType"></label>
+            <select id="selectedType" x-model="selectedType" class="border border-gray-300 rounded-lg p-2 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+                <option value="r">r</option>
+<!--                <option value="u">u</option>-->
+            </select>
+        </div>
+
+        <div class="flex flex-col space-y-1">
+            <label for="subredditOrUser"></label>
+            <input id="subredditOrUser" x-model="subredditOrUser" :placeholder="selectedType === 'r' ? 'subreddit' : 'user'" type="text" class="border border-gray-300 rounded-lg p-2 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+        </div>
+
+        <div class="flex flex-col space-y-1">
+            <!-- TODO show tooltip that not hiding bots can be very CPU intensive -->
+            <label class="invisible">Checkbox:</label>
+            <label class="flex items-center space-x-2">
+                <input id="hideBots" x-model="hideBots" type="checkbox" class="form-checkbox rounded text-indigo-600 focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+                <span>Hide bots</span>
+            </label>
+        </div>
+
+        <div class="flex flex-col space-y-1">
+            <label for="subsOver">Subs over # members:</label>
+            <input type="number" x-model="subsOver" id="subsOver" class="border border-gray-300 rounded-lg p-2 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+        </div>
+
+        <div class="flex flex-col space-y-1">
+            <label for="modsOver">Only show mods over # of subreddits they moderate:</label>
+            <input type="number" x-model="modsOver" id="modsOver" class="border border-gray-300 rounded-lg p-2 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+        </div>
+
+        <div class="flex flex-col space-y-1">
+            <label for="layers">Layers</label>
+            <select id="layers" x-model="layers" class="border border-gray-300 rounded-lg p-2 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition duration-200 ease-in-out">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+            </select>
+        </div>
+
+        <div class="flex flex-col justify-end">
+            <button @click="generateGraph" class="bg-green-500 text-white font-semibold py-2 px-6 rounded-lg shadow-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-700 focus:ring-opacity-50 transition duration-300 ease-in-out transform hover:-translate-y-1 hover:shadow-lg">
+                Generate
+            </button>
+        </div>
+    </div>
+</div>
+
+    <!-- Cytoscape Graph -->
+    <div id="cy" style="width: 100%; height: 600px;"></div>
+
+</div>
+
+</body>
+<script>
+    function dataHandler() {
+        return {
+            selectedType: 'r',
+            subredditOrUser: '',
+            hideBots: false,
+            subsOver: null,
+            modsOver: null,
+
+            async generateGraph() {
+                const response = await fetch(`http://localhost:3000/api/data?searchType=${this.selectedType}&query=${this.subredditOrUser}&hideBots=${this.hideBots}&subsOver=${this.subsOver}&modsOver=${this.modsOver}&layers=${this.layers}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                const data = await response.json();
+                initCytoscape(data);
+            }
+
+
+        }
+    }
+
+    function initCytoscape(data) {
+        let elements = [];
+        let userAssociations = {};
+
+        Object.keys(data).forEach(user => {
+            userAssociations[user] = data[user].length;
+            elements.push({ data: { id: user, label: user, type: 'user' } });
+
+            data[user].forEach(subreddit => {
+                if (!elements.some(elem => elem.data.id === subreddit)) {
+                    elements.push({ data: { id: subreddit, label: subreddit, type: 'subreddit' } });
+                }
+                elements.push({ data: { source: user, target: subreddit } });
+            });
+        });
+
+        cytoscape({
+            container: document.getElementById('cy'),
+            elements: elements,
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'label': 'data(label)',
+                        'color': '#000',
+                        'text-valign': 'center',
+                        'background-color': function(ele) {
+                            // users blue, subreddits red
+                            return ele.data('type') === 'user' ? '#007bff' : '#dc3545';
+                        },
+                        // node size of users set by number of subreddits they moderate
+                        'width': function(ele) {
+                            return 20 + userAssociations[ele.data('id')] * 2;
+                        },
+                        'height': function(ele) {
+                            return 20 + userAssociations[ele.data('id')] * 2;
+                        }
+                    }
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 2,
+                        'line-color': '#ccc'
+                    }
+                }
+            ],
+            layout: {
+                name: 'cose'
+            }
+        });
+    }
+
+</script>
+</html>
